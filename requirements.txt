@@ -6,3 +6,4 @@ Pillow
 streamlit-drawable-canvas
 ultralytics
 yt-dlp
+supervision
