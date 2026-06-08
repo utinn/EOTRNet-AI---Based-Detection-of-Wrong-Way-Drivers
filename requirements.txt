@@ -6,4 +6,4 @@ Pillow==10.3.0
 streamlit-drawable-canvas==0.9.3
 ultralytics==8.2.0
 yt-dlp==2024.5.27
-supervision==0.18.0
+supervision>=0.28.0
