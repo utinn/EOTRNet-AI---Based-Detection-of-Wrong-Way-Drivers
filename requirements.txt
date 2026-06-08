@@ -1,4 +1,5 @@
-streamlit
+streamlit==1.32.0
+streamlit-drawable-canvas==0.9.3
 
 numpy<2
 pandas
@@ -13,4 +14,3 @@ supervision
 opencv-python-headless==4.8.1.78
 
 yt-dlp
-streamlit-drawable-canvas
