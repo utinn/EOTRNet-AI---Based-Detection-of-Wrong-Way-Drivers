@@ -1,3 +1,0 @@
-libgl1
-libglx0
-libx11-6
