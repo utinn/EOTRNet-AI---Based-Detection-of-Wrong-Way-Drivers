@@ -1,10 +1,10 @@
 streamlit
-numpy
+numpy==1.26.4
 pandas
 Pillow
-torch
-torchvision
-ultralytics
+torch==2.2.0
+torchvision==0.17.0
+ultralytics==8.4.62
 supervision
 opencv-python-headless==4.8.1.78
 yt-dlp
