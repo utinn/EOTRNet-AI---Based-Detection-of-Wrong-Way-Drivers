@@ -401,13 +401,14 @@ span[title]:hover::after {
 # ─────────────────────────────────────────────
 #  CONSTANTS
 # ─────────────────────────────────────────────
-DEVICE        = "cuda" if torch.cuda.is_available() else "cpu"
-INFER_EVERY   = 3
-DISPLAY_EVERY = 3
-DISPLAY_WIDTH = 640
-INFER_SIZE    = 360
-DB_PATH       = "TrafficSafetyDatabase.db"
-CLIP_DIR      = "Sample Video Clip"
+DEVICE              = "cuda" if torch.cuda.is_available() else "cpu"
+INFER_EVERY         = 3
+DISPLAY_EVERY       = 3
+DISPLAY_WIDTH       = 640
+INFER_SIZE          = 360
+DB_PATH             = "TrafficSafetyDatabase.db"
+CLIP_DIR            = "Sample Video Clip"
+MIN_CROSSING_DEPTH  = 20   # px a vehicle must travel PAST the line before being counted
 
 os.makedirs(CLIP_DIR, exist_ok=True)
 
@@ -498,10 +499,10 @@ def draw_ui_elements(img, p1, p2, inverted=False):
     cor_end = (int(mx - nx * offset), int(my - ny * offset))
     wrg_end = (int(mx + nx * offset), int(my + ny * offset))
     cv2.line(img, p1, p2, (0, 255, 255), 4)
-    cv2.arrowedLine(img, (int(mx + nx * offset), int(my + ny * offset)), cor_end, (0, 255, 0), 4, tipLength=0.3)
-    cv2.arrowedLine(img, (int(mx - nx * offset), int(my - ny * offset)), wrg_end, (255, 0, 0), 4, tipLength=0.3)
-    cv2.putText(img, "CORRECT", cor_end, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-    cv2.putText(img, "WRONG",   wrg_end, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+    cv2.arrowedLine(img, (int(mx + nx * offset), int(my + ny * offset)), cor_end, (255, 0, 0), 4, tipLength=0.3)
+    cv2.arrowedLine(img, (int(mx - nx * offset), int(my - ny * offset)), wrg_end, (0, 255, 0), 4, tipLength=0.3)
+    cv2.putText(img, "WRONG", cor_end, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+    cv2.putText(img, "CORRECT",   wrg_end, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
     return img
 
 
@@ -520,16 +521,104 @@ def render_calibration_preview(image: Image.Image, lines: list) -> Image.Image:
     return Image.fromarray(img_np)
 
 
-def build_pixel_zones(lines, f_w, f_h):
+# ─────────────────────────────────────────────
+#  SMART CROSSING DETECTOR
+# ─────────────────────────────────────────────
+class ConfirmedLineZone:
+    """
+    Wraps sv.LineZone with a depth-confirmation buffer.
+
+    A vehicle crossing the line is only counted once its centre has
+    travelled at least `min_depth` pixels *past* the line on the new
+    side.  This prevents false positives caused by vehicles that just
+    graze the line or briefly oscillate across it.
+
+    How it works
+    ────────────
+    For each tracked vehicle we store the signed perpendicular distance
+    from the line on the last frame.  When the sign flips (= a crossing
+    candidate), we record the candidate direction and start accumulating
+    depth.  Only when the accumulated depth ≥ min_depth do we actually
+    increment the in / out counter — and we lock that ID so it cannot
+    be re-counted until it returns to the other side.
+    """
+
+    def __init__(self, sv_zone: sv.LineZone, min_depth: int = 20):
+        self._zone      = sv_zone
+        self.min_depth  = max(1, min_depth)
+
+        # Public counters (mirrors sv.LineZone interface)
+        self.in_count   = 0
+        self.out_count  = 0
+
+        # Per-ID state  {tracker_id: {"last_side": int, "candidate": str|None, "depth": float}}
+        self._state: dict = {}
+
+        # Pre-compute line unit normal for fast signed-distance queries
+        sx, sy = sv_zone.vector.start.x, sv_zone.vector.start.y
+        ex, ey = sv_zone.vector.end.x,   sv_zone.vector.end.y
+        dx, dy = ex - sx, ey - sy
+        length = np.sqrt(dx * dx + dy * dy) or 1.0
+        # Normal pointing to the "in" side  (perpendicular, normalised)
+        self._nx   = -dy / length
+        self._ny   =  dx / length
+        self._sx   = sx
+        self._sy   = sy
+
+    def _signed_distance(self, cx: float, cy: float) -> float:
+        """Positive = 'in' side, negative = 'out' side."""
+        return (cx - self._sx) * self._nx + (cy - self._sy) * self._ny
+
+    def trigger(self, detections: sv.Detections):
+        if detections.tracker_id is None or len(detections) == 0:
+            return
+
+        boxes = detections.xyxy          # shape (N, 4)
+        ids   = detections.tracker_id    # shape (N,)
+
+        for box, tid in zip(boxes, ids):
+            cx = (box[0] + box[2]) / 2.0
+            cy = (box[1] + box[3]) / 2.0
+            dist = self._signed_distance(cx, cy)
+            side = 1 if dist >= 0 else -1   # +1 = "in" side, -1 = "out" side
+
+            if tid not in self._state:
+                self._state[tid] = {"last_side": side, "candidate": None, "depth": 0.0}
+                continue
+
+            st = self._state[tid]
+
+            if side == st["last_side"]:
+                # Still on the same side — if we have an active candidate,
+                # accumulate depth (how far they've moved onto this side).
+                if st["candidate"] is not None:
+                    st["depth"] += abs(dist)
+                    if st["depth"] >= self.min_depth:
+                        # ── Confirmed crossing ──
+                        if st["candidate"] == "in":
+                            self.in_count += 1
+                        else:
+                            self.out_count += 1
+                        st["candidate"] = None
+                        st["depth"]     = 0.0
+            else:
+                # Side has flipped — start a new crossing candidate
+                st["candidate"] = "in" if side == 1 else "out"
+                st["depth"]     = abs(dist)   # seed with current distance
+                st["last_side"] = side
+
+
+def build_pixel_zones(lines, f_w, f_h, min_depth: int = MIN_CROSSING_DEPTH):
     zones, coords = [], []
     for ln in lines:
         r1 = (int(ln["p1"][0] * f_w), int(ln["p1"][1] * f_h))
         r2 = (int(ln["p2"][0] * f_w), int(ln["p2"][1] * f_h))
         s, e = (r2, r1) if ln["inv"] else (r1, r2)
-        zones.append(sv.LineZone(
+        sv_zone = sv.LineZone(
             start=sv.Point(*s), end=sv.Point(*e),
             triggering_anchors=[sv.Position.CENTER],
-        ))
+        )
+        zones.append(ConfirmedLineZone(sv_zone, min_depth=min_depth))
         coords.append((r1, r2, ln["inv"]))
     return zones, coords
 
@@ -559,18 +648,20 @@ def prepare_annotated_frame(frame, last_dets, box_ann, lbl_ann, coords, counts):
 def stream_worker(source: str, lines: list, model, ss: dict, area_name: str, settings: dict = None):
     if settings is None:
         settings = {
-            "infer_every":   INFER_EVERY,
-            "display_every": DISPLAY_EVERY,
-            "display_width": DISPLAY_WIDTH,
-            "infer_size":    INFER_SIZE,
-            "device":        DEVICE,
+            "infer_every":       INFER_EVERY,
+            "display_every":     DISPLAY_EVERY,
+            "display_width":     DISPLAY_WIDTH,
+            "infer_size":        INFER_SIZE,
+            "device":            DEVICE,
+            "min_crossing_depth": MIN_CROSSING_DEPTH,
         }
 
-    _infer_every   = settings["infer_every"]
-    _display_every = settings["display_every"]
-    _display_width = settings["display_width"]
-    _infer_size    = settings["infer_size"]
-    _device        = settings["device"]
+    _infer_every        = settings["infer_every"]
+    _display_every      = settings["display_every"]
+    _display_width      = settings["display_width"]
+    _infer_size         = settings["infer_size"]
+    _device             = settings["device"]
+    _min_crossing_depth = settings.get("min_crossing_depth", MIN_CROSSING_DEPTH)
 
     cap = open_capture(source)
     if not cap.isOpened():
@@ -592,7 +683,7 @@ def stream_worker(source: str, lines: list, model, ss: dict, area_name: str, set
     f_h, f_w       = first_frame.shape[:2]
     save_w, save_h = get_360p_dims(f_w, f_h)
     disp_h         = int(f_h * _display_width / f_w)
-    zones, coords  = build_pixel_zones(lines, f_w, f_h)
+    zones, coords  = build_pixel_zones(lines, f_w, f_h, min_depth=_min_crossing_depth)
 
     # ── SQLite: use same DB, separate connection for thread safety ──
     local_conn = sqlite3.connect(DB_PATH, timeout=10)
@@ -700,11 +791,12 @@ def _nearest(value, options):
 
 if "tracking_settings" not in st.session_state:
     st.session_state["tracking_settings"] = {
-        "infer_every":   INFER_EVERY,
-        "display_every": DISPLAY_EVERY,
-        "display_width": _nearest(DISPLAY_WIDTH, _DISPLAY_WIDTH_OPTIONS),
-        "infer_size":    _nearest(INFER_SIZE,    _INFER_SIZE_OPTIONS),
-        "device":        DEVICE,
+        "infer_every":        INFER_EVERY,
+        "display_every":      DISPLAY_EVERY,
+        "display_width":      _nearest(DISPLAY_WIDTH, _DISPLAY_WIDTH_OPTIONS),
+        "infer_size":         _nearest(INFER_SIZE,    _INFER_SIZE_OPTIONS),
+        "device":             DEVICE,
+        "min_crossing_depth": MIN_CROSSING_DEPTH,
     }
 
 ss = st.session_state["stream_state"]
@@ -717,7 +809,7 @@ st.markdown("""
     <div class="logo">🚦</div>
     <div>
         <h1><span>EOTR</span>Net · Traffic Safety AI</h1>
-        <p class="subtitle">Wrong-Way Detection &amp; Surveillance System</p>
+        <p class="subtitle">Smart Traffic Security &amp; Surveillance System</p>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -801,17 +893,31 @@ with st.sidebar:
                                           value=_nearest(ts["infer_size"], _INFER_SIZE_OPTIONS),
                                           key="cfg_infer_size", label_visibility="collapsed")
 
+        st.markdown(cfg_label(
+            "Crossing Depth (px)",
+            "How many pixels past the line a vehicle must travel before it is counted as a confirmed crossing. "
+            "Higher = less sensitive, avoids flagging vehicles that merely graze or briefly oscillate across the line. "
+            "Lower = more sensitive. Recommended: 15–40 px. Takes effect on next stream start."
+        ), unsafe_allow_html=True)
+        new_min_crossing_depth = st.slider(
+            "", min_value=5, max_value=100,
+            value=ts.get("min_crossing_depth", MIN_CROSSING_DEPTH),
+            step=5,
+            key="cfg_min_crossing_depth", label_visibility="collapsed"
+        )
+
         st.markdown("<br>", unsafe_allow_html=True)
         col_apply, col_reset = st.columns(2)
 
         with col_apply:
             if st.button("✅  Apply", use_container_width=True, type="primary", key="cfg_apply"):
                 st.session_state["tracking_settings"] = {
-                    "device":        new_device,
-                    "infer_every":   new_infer_every,
-                    "display_every": new_display_every,
-                    "display_width": new_display_width,
-                    "infer_size":    new_infer_size,
+                    "device":             new_device,
+                    "infer_every":        new_infer_every,
+                    "display_every":      new_display_every,
+                    "display_width":      new_display_width,
+                    "infer_size":         new_infer_size,
+                    "min_crossing_depth": new_min_crossing_depth,
                 }
                 if ss["running"]:
                     ss["display_width_live"] = new_display_width
@@ -821,16 +927,17 @@ with st.sidebar:
         with col_reset:
             if st.button("↺  Reset", use_container_width=True, key="cfg_reset"):
                 st.session_state["tracking_settings"] = {
-                    "infer_every":   INFER_EVERY,
-                    "display_every": DISPLAY_EVERY,
-                    "display_width": _nearest(DISPLAY_WIDTH, _DISPLAY_WIDTH_OPTIONS),
-                    "infer_size":    _nearest(INFER_SIZE,    _INFER_SIZE_OPTIONS),
-                    "device":        DEVICE,
+                    "infer_every":        INFER_EVERY,
+                    "display_every":      DISPLAY_EVERY,
+                    "display_width":      _nearest(DISPLAY_WIDTH, _DISPLAY_WIDTH_OPTIONS),
+                    "infer_size":         _nearest(INFER_SIZE,    _INFER_SIZE_OPTIONS),
+                    "device":             DEVICE,
+                    "min_crossing_depth": MIN_CROSSING_DEPTH,
                 }
                 st.rerun()
 
         if ss["running"]:
-            st.caption("⚠️ Inference settings (Device, Infer Every, Inference Size) take effect on next stream start.")
+            st.caption("⚠️ Inference settings (Device, Infer Every, Inference Size, Crossing Depth) take effect on next stream start.")
 
     st.markdown("---")
 
