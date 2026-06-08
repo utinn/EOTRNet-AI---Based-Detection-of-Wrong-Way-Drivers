@@ -1,5 +1,4 @@
 streamlit
-opencv-python
 numpy
 pandas
 Pillow
@@ -7,5 +6,6 @@ torch
 torchvision
 ultralytics
 supervision
-streamlit-drawable-canvas
+opencv-python-headless==4.8.1.78
 yt-dlp
+streamlit-drawable-canvas
