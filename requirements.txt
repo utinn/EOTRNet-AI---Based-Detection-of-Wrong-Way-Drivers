@@ -1,9 +1,8 @@
-streamlit>=1.41.0
-pandas>=2.2.0
-numpy>=1.26.0
-opencv-python-headless==4.9.0.80
-pillow>=11.0.0
-git+https://github.com/bowespublishing/streamlit-drawable-canvas.git
+fastapi
+uvicorn
+streamlit
+requests
+opencv-python
+numpy
 ultralytics
-yt-dlp
-supervision>=0.28.0
+supervision
