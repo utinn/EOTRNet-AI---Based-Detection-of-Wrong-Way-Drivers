@@ -8,3 +8,5 @@ torchvision==0.16.2
 
 ultralytics
 opencv-python-headless
+
+supervision==0.28.0
