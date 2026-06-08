@@ -1,8 +1,11 @@
-fastapi
-uvicorn
 streamlit
-requests
 opencv-python
 numpy
+pandas
+Pillow
+torch
+torchvision
 ultralytics
 supervision
+streamlit-drawable-canvas
+yt-dlp
