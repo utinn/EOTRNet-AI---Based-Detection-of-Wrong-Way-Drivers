@@ -11,3 +11,4 @@ opencv-python-headless
 
 supervision==0.28.0
 streamlit-drawable-canvas==0.9.3
+import yt_dlp
