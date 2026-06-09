@@ -1,11 +1,4 @@
 import streamlit as st
-import streamlit.elements.image as st_image
-try:
-    import streamlit.elements.image_utils as image_utils
-    st_image.image_to_url = image_utils.image_to_url
-except ImportError:
-    pass
-
 import cv2
 import numpy as np
 from ultralytics import YOLO
@@ -453,9 +446,11 @@ db_conn = init_db()
 # ─────────────────────────────────────────────
 def get_youtube_stream_url(youtube_url: str):
     ydl_opts = {
-        "format": "best[ext=mp4][height<=720]/best[height<=720]/best",
-        "noplaylist": True, "quiet": True,
-        "no_warnings": True, "live_from_start": False,
+        "format": "bestvideo[height<=480][ext=mp4]+bestaudio/best[height<=480]",
+        "noplaylist": True, 
+        "quiet": True,
+        "no_warnings": True, 
+        "live_from_start": False,
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
