@@ -14,7 +14,6 @@ import json
 import os
 import datetime
 import pandas as pd
-import ffmpeg
 
 # ─────────────────────────────────────────────
 #  PAGE CONFIG — must be first Streamlit call
@@ -447,11 +446,9 @@ db_conn = init_db()
 # ─────────────────────────────────────────────
 def get_youtube_stream_url(youtube_url: str):
     ydl_opts = {
-        "format": "bestvideo[height<=480][ext=mp4]+bestaudio/best[height<=480]",
-        "noplaylist": True, 
-        "quiet": True,
-        "no_warnings": True, 
-        "live_from_start": False,
+        "format": "best[ext=mp4][height<=720]/best[height<=720]/best",
+        "noplaylist": True, "quiet": True,
+        "no_warnings": True, "live_from_start": False,
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -472,39 +469,20 @@ def open_capture(source: str):
     if source.isdigit():
         return cv2.VideoCapture(int(source))
     cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
-
-    if not cap.isOpened():
-        st.error(f"Failed to open source: {source}")
-        # This will help you see if the URL is empty or rejected by FFMPEG
-        return None
-    
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return cap
 
 def capture_screenshot(source: str):
     if "youtube.com" in source or "youtu.be" in source:
         source = get_youtube_stream_url(source)
-        
-    if not source:
-        return None
-        
-    try:
-        # Use FFmpeg to grab one frame from the HLS stream
-        out, _ = (
-            ffmpeg
-            .input(source, format='hls', timeout=5)
-            .output('pipe:', vframes=1, format='image2', vcodec='rawvideo', pix_fmt='rgb24')
-            .run(capture_stdout=True, capture_stderr=True)
-        )
-        
-        # Convert the raw bytes from FFmpeg into a NumPy array
-        # You need to know the width/height of the stream (e.g., 640x360)
-        # Or let FFmpeg handle the resizing to a fixed size
-        frame = np.frombuffer(out, np.uint8).reshape([360, 640, 3])
-        return Image.fromarray(frame)
-    except Exception as e:
-        st.error(f"FFmpeg capture failed: {e}")
-        return None
+        if not source:
+            return None
+    cap = open_capture(source)
+    ret, frame = cap.read()
+    cap.release()
+    if ret:
+        return Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    return None
 
 # ─────────────────────────────────────────────
 #  DRAWING HELPERS
