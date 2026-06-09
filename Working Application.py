@@ -471,6 +471,12 @@ def open_capture(source: str):
     if source.isdigit():
         return cv2.VideoCapture(int(source))
     cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+
+    if not cap.isOpened():
+        st.error(f"Failed to open source: {source}")
+        # This will help you see if the URL is empty or rejected by FFMPEG
+        return None
+    
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return cap
 
@@ -481,6 +487,13 @@ def capture_screenshot(source: str):
             return None
     cap = open_capture(source)
     ret, frame = cap.read()
+
+    if ret and frame is not None and np.sum(frame) > 0:
+        return Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    else:
+        st.warning("Frame read returned empty or black data.")
+        return None
+    
     cap.release()
     if ret:
         return Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
