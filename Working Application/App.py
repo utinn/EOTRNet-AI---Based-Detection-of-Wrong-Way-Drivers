@@ -755,7 +755,9 @@ def stream_worker(source: str, lines: list, model, ss: dict, area_name: str, set
 # ─────────────────────────────────────────────
 #  MODEL
 # ─────────────────────────────────────────────
-model = YOLO("Application Model/model.pt")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODEL_PATH = os.path.join(BASE_DIR, "Application Model", "model.pt")
+model = YOLO(MODEL_PATH)
 
 # ─────────────────────────────────────────────
 #  SESSION STATE
