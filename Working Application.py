@@ -1,4 +1,11 @@
 import streamlit as st
+import streamlit.elements.image as st_image
+try:
+    import streamlit.elements.image_utils as image_utils
+    st_image.image_to_url = image_utils.image_to_url
+except ImportError:
+    pass
+
 import cv2
 import numpy as np
 from ultralytics import YOLO
@@ -14,13 +21,6 @@ import json
 import os
 import datetime
 import pandas as pd
-
-import streamlit.elements.image as st_image
-try:
-    import streamlit.elements.image_utils as image_utils
-    st_image.image_to_url = image_utils.image_to_url
-except ImportError:
-    pass
 
 # ─────────────────────────────────────────────
 #  PAGE CONFIG — must be first Streamlit call
