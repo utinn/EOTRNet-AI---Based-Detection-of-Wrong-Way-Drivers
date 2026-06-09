@@ -1,15 +1,25 @@
-# Notebooks
-*.ipynb
-Notebooks/
-
-# Experiments
 Baseline Evaluation/
 Baseline Model Path/
+Notebooks/
 Transfer Learning/
 Transfer Learning Model Path/
-
-# Cache / OS junk
+.git/
+.gitignore
+.github/
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+.pytest_cache/
+venv/
+.venv/
+env/
+.env
+.ipynb_checkpoints/
+*.ipynb
 .DS_Store
 Thumbs.db
+TrafficSafetyDatabase.db
+Sample Video Clip/
+*.md
+*.txt
+!requirements.txt
