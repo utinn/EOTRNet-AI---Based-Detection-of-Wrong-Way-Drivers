@@ -14,6 +14,7 @@ import json
 import os
 import datetime
 import pandas as pd
+import ffmpeg
 
 # ─────────────────────────────────────────────
 #  PAGE CONFIG — must be first Streamlit call
