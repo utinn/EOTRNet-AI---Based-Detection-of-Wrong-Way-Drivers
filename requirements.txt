@@ -10,5 +10,5 @@ ultralytics
 opencv-python-headless
 
 supervision==0.28.0
-git+https://github.com/bowespublishing/streamlit-drawable-canvas.git
+streamlit-drawable-canvas==0.9.3
 yt_dlp
