@@ -1,0 +1,15 @@
+# Notebooks
+*.ipynb
+Notebooks/
+
+# Experiments
+Baseline Evaluation/
+Baseline Model Path/
+Transfer Learning/
+Transfer Learning Model Path/
+
+# Cache / OS junk
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
