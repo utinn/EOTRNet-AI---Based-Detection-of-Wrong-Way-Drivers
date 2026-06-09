@@ -483,21 +483,27 @@ def open_capture(source: str):
 def capture_screenshot(source: str):
     if "youtube.com" in source or "youtu.be" in source:
         source = get_youtube_stream_url(source)
-        if not source:
-            return None
-    cap = open_capture(source)
-    ret, frame = cap.read()
-
-    if ret and frame is not None and np.sum(frame) > 0:
-        return Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-    else:
-        st.warning("Frame read returned empty or black data.")
+        
+    if not source:
         return None
-    
-    cap.release()
-    if ret:
-        return Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-    return None
+        
+    try:
+        # Use FFmpeg to grab one frame from the HLS stream
+        out, _ = (
+            ffmpeg
+            .input(source, format='hls', timeout=5)
+            .output('pipe:', vframes=1, format='image2', vcodec='rawvideo', pix_fmt='rgb24')
+            .run(capture_stdout=True, capture_stderr=True)
+        )
+        
+        # Convert the raw bytes from FFmpeg into a NumPy array
+        # You need to know the width/height of the stream (e.g., 640x360)
+        # Or let FFmpeg handle the resizing to a fixed size
+        frame = np.frombuffer(out, np.uint8).reshape([360, 640, 3])
+        return Image.fromarray(frame)
+    except Exception as e:
+        st.error(f"FFmpeg capture failed: {e}")
+        return None
 
 # ─────────────────────────────────────────────
 #  DRAWING HELPERS
