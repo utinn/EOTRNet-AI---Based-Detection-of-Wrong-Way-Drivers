@@ -15,6 +15,13 @@ import os
 import datetime
 import pandas as pd
 
+import streamlit.elements.image as st_image
+try:
+    import streamlit.elements.image_utils as image_utils
+    st_image.image_to_url = image_utils.image_to_url
+except ImportError:
+    pass
+
 # ─────────────────────────────────────────────
 #  PAGE CONFIG — must be first Streamlit call
 # ─────────────────────────────────────────────
