@@ -1,20 +1,26 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y \
-    libgl1 \
-    libglib2.0-0 \
-    ffmpeg \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 \
+        libglib2.0-0 \
+        libsm6 \
+        libxrender1 \
+        libxext6 \
+        ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /Working Application
+WORKDIR /app
 
 COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+COPY ["Working Application/App.py", "Working Application/App.py"]
+COPY ["Application Model/model.pt", "Application Model/model.pt"]
 
-COPY . .
+EXPOSE 7860
 
-EXPOSE 8501
-
-CMD ["streamlit", "run", "App.py", "--server.address=0.0.0.0", "--server.port=8501"]
+CMD ["streamlit", "run", "Working Application/App.py", \
+     "--server.port=7860", \
+     "--server.address=0.0.0.0", \
+     "--server.headless=true", \
+     "--server.fileWatcherType=none"]
