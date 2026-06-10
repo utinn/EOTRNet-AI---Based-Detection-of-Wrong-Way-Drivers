@@ -15,9 +15,6 @@ import os
 import datetime
 import pandas as pd
 
-# ─────────────────────────────────────────────
-#  PAGE CONFIG — must be first Streamlit call
-# ─────────────────────────────────────────────
 st.set_page_config(
     page_title="EOTRNet · Traffic Safety AI",
     page_icon="🚦",
@@ -25,9 +22,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ─────────────────────────────────────────────
-#  DATE FORMATTING HELPERS (INDONESIAN)
-# ─────────────────────────────────────────────
 INDONESIAN_DAYS = {
     "Monday": "Senin", "Tuesday": "Selasa", "Wednesday": "Rabu",
     "Thursday": "Kamis", "Friday": "Jumat", "Saturday": "Sabtu", "Sunday": "Minggu"
@@ -45,9 +39,6 @@ def format_indonesian_date(ts):
     year = ts.year
     return f"{day_name}, {day} {month_name} {year}"
 
-# ─────────────────────────────────────────────
-#  CUSTOM CSS
-# ─────────────────────────────────────────────
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap');
@@ -398,23 +389,17 @@ span[title]:hover::after {
 </style>
 """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────
-#  CONSTANTS
-# ─────────────────────────────────────────────
 DEVICE              = "cuda" if torch.cuda.is_available() else "cpu"
 INFER_EVERY         = 3
 DISPLAY_EVERY       = 3
 DISPLAY_WIDTH       = 640
 INFER_SIZE          = 360
-DB_PATH             = "TrafficSafetyDatabase.db"
-CLIP_DIR            = "Sample Video Clip"
-MIN_CROSSING_DEPTH  = 20   # px a vehicle must travel PAST the line before being counted
+DB_PATH             = "Data/TrafficSafetyDatabase.db"
+CLIP_DIR            = "Data/Sample Video Clip"
+MIN_CROSSING_DEPTH  = 20  
 
 os.makedirs(CLIP_DIR, exist_ok=True)
 
-# ─────────────────────────────────────────────
-#  DATABASE
-# ─────────────────────────────────────────────
 def init_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL;")
@@ -441,9 +426,6 @@ def init_db():
 
 db_conn = init_db()
 
-# ─────────────────────────────────────────────
-#  STREAM HELPERS
-# ─────────────────────────────────────────────
 def get_youtube_stream_url(youtube_url: str):
     ydl_opts = {
         "format": "best[ext=mp4][height<=720]/best[height<=720]/best",
@@ -484,9 +466,6 @@ def capture_screenshot(source: str):
         return Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
     return None
 
-# ─────────────────────────────────────────────
-#  DRAWING HELPERS
-# ─────────────────────────────────────────────
 def draw_ui_elements(img, p1, p2, inverted=False):
     start, end = (p2, p1) if inverted else (p1, p2)
     dx, dy = end[0] - start[0], end[1] - start[1]
@@ -520,10 +499,6 @@ def render_calibration_preview(image: Image.Image, lines: list) -> Image.Image:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
     return Image.fromarray(img_np)
 
-
-# ─────────────────────────────────────────────
-#  SMART CROSSING DETECTOR
-# ─────────────────────────────────────────────
 class ConfirmedLineZone:
     """
     Wraps sv.LineZone with a depth-confirmation buffer.
@@ -547,19 +522,18 @@ class ConfirmedLineZone:
         self._zone      = sv_zone
         self.min_depth  = max(1, min_depth)
 
-        # Public counters (mirrors sv.LineZone interface)
+
         self.in_count   = 0
         self.out_count  = 0
 
-        # Per-ID state  {tracker_id: {"last_side": int, "candidate": str|None, "depth": float}}
+
         self._state: dict = {}
 
-        # Pre-compute line unit normal for fast signed-distance queries
+
         sx, sy = sv_zone.vector.start.x, sv_zone.vector.start.y
         ex, ey = sv_zone.vector.end.x,   sv_zone.vector.end.y
         dx, dy = ex - sx, ey - sy
         length = np.sqrt(dx * dx + dy * dy) or 1.0
-        # Normal pointing to the "in" side  (perpendicular, normalised)
         self._nx   = -dy / length
         self._ny   =  dx / length
         self._sx   = sx
@@ -573,14 +547,14 @@ class ConfirmedLineZone:
         if detections.tracker_id is None or len(detections) == 0:
             return
 
-        boxes = detections.xyxy          # shape (N, 4)
-        ids   = detections.tracker_id    # shape (N,)
+        boxes = detections.xyxy         
+        ids   = detections.tracker_id    
 
         for box, tid in zip(boxes, ids):
             cx = (box[0] + box[2]) / 2.0
             cy = (box[1] + box[3]) / 2.0
             dist = self._signed_distance(cx, cy)
-            side = 1 if dist >= 0 else -1   # +1 = "in" side, -1 = "out" side
+            side = 1 if dist >= 0 else -1 
 
             if tid not in self._state:
                 self._state[tid] = {"last_side": side, "candidate": None, "depth": 0.0}
@@ -589,12 +563,10 @@ class ConfirmedLineZone:
             st = self._state[tid]
 
             if side == st["last_side"]:
-                # Still on the same side — if we have an active candidate,
-                # accumulate depth (how far they've moved onto this side).
+
                 if st["candidate"] is not None:
                     st["depth"] += abs(dist)
                     if st["depth"] >= self.min_depth:
-                        # ── Confirmed crossing ──
                         if st["candidate"] == "in":
                             self.in_count += 1
                         else:
@@ -602,9 +574,9 @@ class ConfirmedLineZone:
                         st["candidate"] = None
                         st["depth"]     = 0.0
             else:
-                # Side has flipped — start a new crossing candidate
+          
                 st["candidate"] = "in" if side == 1 else "out"
-                st["depth"]     = abs(dist)   # seed with current distance
+                st["depth"]     = abs(dist) 
                 st["last_side"] = side
 
 
@@ -642,9 +614,6 @@ def prepare_annotated_frame(frame, last_dets, box_ann, lbl_ann, coords, counts):
     cv2.putText(img, f"VIOLATORS: {counts['out']}", (w - 250, 95),  cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
     return img
 
-# ─────────────────────────────────────────────
-#  BACKGROUND STREAM WORKER
-# ─────────────────────────────────────────────
 def stream_worker(source: str, lines: list, model, ss: dict, area_name: str, settings: dict = None):
     if settings is None:
         settings = {
@@ -685,18 +654,16 @@ def stream_worker(source: str, lines: list, model, ss: dict, area_name: str, set
     disp_h         = int(f_h * _display_width / f_w)
     zones, coords  = build_pixel_zones(lines, f_w, f_h, min_depth=_min_crossing_depth)
 
-    # ── SQLite: use same DB, separate connection for thread safety ──
     local_conn = sqlite3.connect(DB_PATH, timeout=10)
 
     fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    fourcc = cv2.VideoWriter_fourcc(*"avc1")
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
 
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     video_filename = f"{CLIP_DIR}/{area_name.replace(' ', '_')}_{ts}.mp4"   
     
     out = cv2.VideoWriter(video_filename, fourcc, fps, (save_w, save_h))
 
-    # Track per-chunk deltas
     prev_in, prev_out = 0, 0
 
     frame_idx = 0
@@ -704,11 +671,9 @@ def stream_worker(source: str, lines: list, model, ss: dict, area_name: str, set
     frame     = first_frame
 
     while ss["running"]:
-        # ── Write annotated frame to disk ──
         annotated = prepare_annotated_frame(frame, last_dets, box_ann, lbl_ann, coords, ss["counts"])
         out.write(cv2.resize(annotated, (save_w, save_h)))
 
-        # ── Inference (every Nth frame) ──
         if frame_idx % _infer_every == 0:
             res       = model(frame, imgsz=_infer_size, device=_device, verbose=False)[0]
             last_dets = sv.Detections.from_ultralytics(res)
@@ -722,7 +687,6 @@ def stream_worker(source: str, lines: list, model, ss: dict, area_name: str, set
             "out": sum(z.out_count for z in zones),
         }
 
-        # ── Display frame (every Nth frame) ──
         if frame_idx % _display_every == 0:
             disp = annotated.copy()
             disp = cv2.resize(disp, (_display_width, disp_h))
@@ -733,35 +697,36 @@ def stream_worker(source: str, lines: list, model, ss: dict, area_name: str, set
         if not ret:
             break
 
-    # ── Final partial chunk ──
     out.release()
-    if os.path.exists(video_filename) and os.path.getsize(video_filename) > 0:
-        chunk_in  = ss["counts"]["in"]  - prev_in
-        chunk_out = ss["counts"]["out"] - prev_out
-        try:
-            local_conn.execute(
-                "INSERT INTO surveillance_logs (cctv_location, correct_count, violator_count, video_filepath) "
-                "VALUES (?, ?, ?, ?)",
-                (area_name, chunk_in, chunk_out, video_filename),
-            )
-            local_conn.commit()
-        except Exception as e:
-            print(f"Error logging final chunk: {e}")
+
+    h264_filename = video_filename.replace(".mp4", "_h264.mp4")
+    os.system(f'ffmpeg -i "{video_filename}" -vcodec libx264 -acodec aac "{h264_filename}" -y -loglevel quiet')
+
+    final_filename = h264_filename if os.path.exists(h264_filename) and os.path.getsize(h264_filename) > 0 else video_filename
+
+    chunk_in  = ss["counts"]["in"]  - prev_in
+    chunk_out = ss["counts"]["out"] - prev_out
+
+    try:
+        local_conn.execute(
+            "INSERT INTO surveillance_logs (cctv_location, correct_count, violator_count, video_filepath) "
+            "VALUES (?, ?, ?, ?)",
+            (area_name, chunk_in, chunk_out, final_filename),
+        )
+        local_conn.commit()
+        if final_filename == h264_filename and os.path.exists(video_filename):
+            os.remove(video_filename)
+    except Exception as e:
+        print(f"Error logging final chunk: {e}")
 
     cap.release()
     local_conn.close()
     ss["running"] = False
 
-# ─────────────────────────────────────────────
-#  MODEL
-# ─────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_PATH = os.path.join(BASE_DIR, "Application Model", "model.pt")
 model = YOLO(MODEL_PATH)
 
-# ─────────────────────────────────────────────
-#  SESSION STATE
-# ─────────────────────────────────────────────
 if "area_registry" not in st.session_state:
     st.session_state["area_registry"] = {}
     cur = db_conn.cursor()
@@ -783,7 +748,6 @@ if "stream_state" not in st.session_state:
 if "confirm_delete_area" not in st.session_state:
     st.session_state["confirm_delete_area"] = False
 
-# ── Tracking settings (loaded from session state with defaults) ──
 _INFER_SIZE_OPTIONS    = [160, 320, 480, 640]
 _DISPLAY_WIDTH_OPTIONS = [320, 480, 640, 800, 960, 1280]
 
@@ -803,9 +767,6 @@ if "tracking_settings" not in st.session_state:
 
 ss = st.session_state["stream_state"]
 
-# ─────────────────────────────────────────────
-#  APP HEADER
-# ─────────────────────────────────────────────
 st.markdown("""
 <div class="app-header">
     <div class="logo">🚦</div>
@@ -815,10 +776,6 @@ st.markdown("""
     </div>
 </div>
 """, unsafe_allow_html=True)
-
-# ─────────────────────────────────────────────
-#  SIDEBAR
-# ─────────────────────────────────────────────
 with st.sidebar:
     # Device badge
     if DEVICE == "cuda":
@@ -855,15 +812,12 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Helper to render tooltip (?) labels
     def cfg_label(text, tooltip):
         return (
             f'{text} <span title="{tooltip}" style="cursor:help;color:var(--accent);'
             f'font-size:0.75rem;border:1px solid var(--accent);border-radius:50%;'
             f'padding:0 4px;font-weight:700;margin-left:4px">?</span>'
         )
-
-    # ── Settings expander ──
     with st.expander("⚙️  Tracking Settings", expanded=False):
         ts = st.session_state["tracking_settings"]
 
@@ -943,7 +897,6 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # ── Delete Active Area (with confirmation) ──
     if active_area:
         if not st.session_state["confirm_delete_area"]:
             if st.button("🗑️  Delete Active Area", use_container_width=True):
@@ -962,7 +915,6 @@ with st.sidebar:
             col_yes, col_no = st.columns(2)
             with col_yes:
                 if st.button("✅ Yes, Delete", use_container_width=True, type="primary"):
-                    # Delete associated video files from disk
                     video_rows = db_conn.execute(
                         "SELECT video_filepath FROM surveillance_logs WHERE cctv_location = ?",
                         (active_area,)
@@ -975,7 +927,6 @@ with st.sidebar:
                                 deleted_files += 1
                             except Exception:
                                 pass
-                    # Delete DB rows
                     db_conn.execute("DELETE FROM surveillance_logs WHERE cctv_location = ?", (active_area,))
                     db_conn.execute("DELETE FROM areas WHERE name = ?", (active_area,))
                     db_conn.commit()
@@ -988,9 +939,6 @@ with st.sidebar:
                     st.session_state["confirm_delete_area"] = False
                     st.rerun()
 
-# ─────────────────────────────────────────────
-#  GUARD — no areas yet
-# ─────────────────────────────────────────────
 if not active_area:
     st.markdown("""
     <div class="empty-state">
@@ -1004,9 +952,6 @@ if not active_area:
 curr_data = st.session_state["area_registry"][active_area]
 st.session_state["active_area_name"] = active_area
 
-# ─────────────────────────────────────────────
-#  TABS
-# ─────────────────────────────────────────────
 tab1, tab2, tab3, tab4 = st.tabs([
     "🎯  Calibration",
     "📡  Live Monitor",
@@ -1014,9 +959,6 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "📂  Tracking Logs",
 ])
 
-# ══════════════════════════════════════════════
-#  TAB 1 — CALIBRATION
-# ══════════════════════════════════════════════
 with tab1:
     col_c, col_s = st.columns([3, 1], gap="large")
 
@@ -1122,9 +1064,6 @@ with tab1:
                         db_conn.commit()
                         st.rerun()
 
-# ══════════════════════════════════════════════
-#  TAB 2 — LIVE Monitor
-# ══════════════════════════════════════════════
 with tab2:
     if not curr_data["lines"]:
         st.markdown("""
@@ -1198,13 +1137,12 @@ with tab2:
             st.error(ss["error"])
             ss["error"] = None
 
-        # ── Stop ──
         if stop_clicked:
             ss["running"] = False
             status_placeholder.warning("Stopping stream… finalising video chunk.")
+            time.sleep(3)
             st.rerun()
 
-        # ── Start ──
         if start_clicked:
             source = curr_data["source"].strip()
             db_conn.execute("UPDATE areas SET source = ? WHERE name = ?", (source, active_area))
@@ -1232,9 +1170,9 @@ with tab2:
             ).start()
             status_placeholder.success("Stream started!")
 
-        # ── Auto-refresh while live ──
+
         if ss["running"]:
-            # Update metrics
+
             c_in  = ss["counts"]["in"]
             c_out = ss["counts"]["out"]
             total = c_in + c_out
@@ -1260,13 +1198,9 @@ with tab2:
             time.sleep(0.15)
             st.rerun()
 
-# ══════════════════════════════════════════════
-#  TAB 3 — ANALYTICS
-# ══════════════════════════════════════════════
 with tab3:
     st.markdown('<div class="section-header"><h3>Analytics Dashboard</h3><div class="line"></div></div>', unsafe_allow_html=True)
 
-    # ── Fetching data strictly for Active Area ──
     df_all = pd.read_sql_query(
         "SELECT * FROM surveillance_logs WHERE cctv_location = ? ORDER BY log_timestamp DESC",
         db_conn, params=(active_area,)
@@ -1282,13 +1216,11 @@ with tab3:
         """, unsafe_allow_html=True)
     else:
         df_all["log_timestamp"] = pd.to_datetime(df_all["log_timestamp"]) + pd.Timedelta(hours=7)
-        # Store original raw date logic for correct grouping/ordering before string conversion
         df_all["RawDate"]  = df_all["log_timestamp"].dt.date
         df_all["Hour"]  = df_all["log_timestamp"].dt.hour
         df_all["total"] = df_all["correct_count"] + df_all["violator_count"]
         df_all["vrate"] = (df_all["violator_count"] / df_all["total"].replace(0, 1) * 100).round(1)
 
-        # ── KPI row ──
         total_correct  = int(df_all["correct_count"].sum())
         total_violators = int(df_all["violator_count"].sum())
         total_all      = total_correct + total_violators
@@ -1306,25 +1238,22 @@ with tab3:
 
         chart_col1, chart_col2 = st.columns(2)
 
-        # ── Chart 1: Daily trend ──
+
         with chart_col1:
             st.markdown("**Daily Counts**")
             daily = df_all.groupby("RawDate")[["correct_count", "violator_count"]].sum().reset_index()
-            # Map index strictly to string to display format as Indonesian Locale
+
             daily["Date"] = pd.to_datetime(daily["RawDate"]).apply(format_indonesian_date)
             daily.columns = ["RawDate", "Correct", "Violators", "Date"]
             st.bar_chart(daily.set_index("Date")[["Correct", "Violators"]], color=["#00e676", "#ff3e6c"], use_container_width=True)
 
-        # ── Chart 2: Hourly heatmap using bar chart ──
+
         with chart_col2:
             st.markdown("**Violations by Hour of Day**")
             hourly = df_all.groupby("Hour")["violator_count"].sum().reindex(range(24), fill_value=0).reset_index()
             hourly.columns = ["Hour", "Violators"]
             st.bar_chart(hourly.set_index("Hour"), color="#ff3e6c", use_container_width=True)
 
-# ══════════════════════════════════════════════
-#  TAB 4 — EVIDENCE LOGS
-# ══════════════════════════════════════════════
 with tab4:
     st.markdown(f'<div class="section-header"><h3>Evidence Logs · {active_area}</h3><div class="line"></div></div>', unsafe_allow_html=True)
 
@@ -1344,7 +1273,7 @@ with tab4:
         """, unsafe_allow_html=True)
     else:
         df["log_timestamp"] = pd.to_datetime(df["log_timestamp"]) + pd.Timedelta(hours=7)
-        # Apply the indonesian date conversion logic here
+
         df["Date"]  = df["log_timestamp"].apply(format_indonesian_date)
         df["Time"]  = df["log_timestamp"].dt.strftime("%H:%M:%S")
         df["total"] = df["correct_count"] + df["violator_count"]
